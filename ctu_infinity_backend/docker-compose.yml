@@ -21,6 +21,18 @@ services:
     volumes:
       - redisdata:/data
     command: ['redis-server', '--appendonly', 'yes']
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: chromadb_server
+    ports:
+      - "8000:8000"
+    environment:
+      IS_PERSISTENT: "TRUE"
+    volumes:
+      - chroma_data:/chroma/chroma
+    restart: always
 volumes:
   pgdata:
   redisdata:
+  chroma_data:
+

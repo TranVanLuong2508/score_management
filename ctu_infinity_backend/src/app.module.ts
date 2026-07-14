@@ -35,6 +35,7 @@ import { SubscriptionsModule } from './modules/subscriptions/subscriptions.modul
 import { RecommendationModule } from './modules/recommendation/recommendation.module';
 import { ChatbotModule } from './modules/chatbot/chatbot.module';
 import { EmailModule } from './modules/email/email.module';
+import { RagModule } from './modules/rag/rag.module';
 
 @Module({
   imports: [
@@ -76,6 +77,7 @@ import { EmailModule } from './modules/email/email.module';
     RecommendationModule,
     ChatbotModule,
     EmailModule,
+    RagModule,
   ],
 })
 export class AppModule {}

@@ -288,7 +288,7 @@ export class CriteriasService {
         criterias: detailCriteria,
       };
     } catch (error) {
-      console.error('Error getting all criteria:', error.message);
+      console.error('Error getting all criteria:');
       if (error instanceof HttpException) {
         throw error;
       }

@@ -107,4 +107,27 @@ export class ApiConfigService {
       fromName: this.getString('SENDGRID_FROM_NAME'),
     };
   }
+
+  get chromaConfig() {
+    return {
+      chromaUrl: this.getString('CHROMA_HOST'),
+    };
+  }
+
+  /** Connection string dùng cho PGVectorStore (RAG module) */
+  get postgresConnectionString(): string {
+    const host = this.getString('DB_HOST');
+    const port = this.getNumber('DB_PORT');
+    const username = this.getString('DB_USERNAME');
+    const password = this.getString('DB_PASSWORD');
+    const database = this.getString('DB_DATABASE');
+    return `postgresql://${username}:${password}@${host}:${port}/${database}`;
+  }
+
+  get openAiConfig() {
+    return {
+      apiKey: this.getString('OPENAI_API_KEY'),
+      chatModel: this.configService.get<string>('OPENAI_CHAT_MODEL') || 'gpt-4o-mini',
+    };
+  }
 }
