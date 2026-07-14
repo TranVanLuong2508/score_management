@@ -21,17 +21,17 @@ graph TD
         Controller[RagController]
         
         subgraph "Business Logic Layer"
-            RagSvc[RagService<br/>(Retrieval & Gen)]
-            IngestSvc[IngestionService<br/>(Data Processing)]
-            VectorSvc[VectorStoreService<br/>(DB Connection)]
+            RagSvc["RagService<br/>(Retrieval & Gen)"]
+            IngestSvc["IngestionService<br/>(Data Processing)"]
+            VectorSvc["VectorStoreService<br/>(DB Connection)"]
         end
     end
     
     %% External Services
-    OpenAI_LLM[OpenAI API<br/>(Chat Model)]
-    OpenAI_Embed[OpenAI API<br/>(Embeddings Model)]
-    Chroma[(ChromaDB<br/>Vector Store)]
-    FileSys[(Local File System<br/>/company-docs)]
+    OpenAI_LLM["OpenAI API<br/>(Chat Model)"]
+    OpenAI_Embed["OpenAI API<br/>(Embeddings Model)"]
+    Chroma[("ChromaDB<br/>Vector Store")]
+    FileSys[("Local File System<br/>/company-docs")]
     
     %% Relationships
     User -- "REST API (Ask / Ingest)" --> Controller
