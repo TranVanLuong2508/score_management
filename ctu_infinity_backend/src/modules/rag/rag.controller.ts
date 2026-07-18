@@ -1,16 +1,18 @@
-import { Body, Controller, Get, Post, UploadedFile, UseInterceptors, BadRequestException } from '@nestjs/common';
+import { Body, Controller, Get, Post, UploadedFile, UseGuards, UseInterceptors, BadRequestException } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ThrottlerGuard, Throttle } from '@nestjs/throttler';
 import { RagService } from './rag.service';
 import { IngestionService } from './services/ingestion.service';
 import { AskQuestionDto, IngestTextDto } from './dto/rag.dto';
 import { Public } from 'src/decorators/customize';
 
 @Controller('rag')
+@UseGuards(ThrottlerGuard)
 export class RagController {
   constructor(
     private readonly ragService: RagService,
     private readonly ingestionService: IngestionService,
-  ) { }
+  ) {}
 
   /** Ingest raw text vào vector store */
   @Post('ingest')
@@ -29,7 +31,7 @@ export class RagController {
   }
 
   /**
-   * Upload file PDF trực tiếp từ client và lưu vào thư mục company-docs, 
+   * Upload file PDF trực tiếp từ client và lưu vào thư mục company-docs,
    * sau đó tự động ingest file đó vào ChromaDB.
    */
   @Post('upload-doc')
@@ -67,6 +69,7 @@ export class RagController {
   /** Trả lời câu hỏi dựa trên tài liệu đã ingest */
   @Post('ask')
   @Public()
+  @Throttle({ rag: { ttl: 60_000, limit: 15 } })
   async ask(@Body() body: AskQuestionDto) {
     return this.ragService.ask(body.question);
   }

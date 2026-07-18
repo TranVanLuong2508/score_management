@@ -24,9 +24,16 @@ export class IngestionService implements OnModuleInit {
 
   /**
    * Tự động ingest toàn bộ PDF trong company-docs/ khi module khởi động.
-   * Chỉ chạy nếu thư mục tồn tại và có file PDF.
+   * Chỉ chạy nếu thư mục tồn tại, có file PDF, và vector store đã sẵn sàng.
    */
   async onModuleInit() {
+    if (!this.vectorStoreService.isReady) {
+      this.logger.warn(
+        '[IngestionService] VectorStore chưa sẵn sàng (ChromaDB offline). Bỏ qua auto-ingest. ' +
+          'Gọi /rag/ingest-docs sau khi ChromaDB online.',
+      );
+      return;
+    }
     await this.ingestCompanyDocs();
   }
 
@@ -36,6 +43,9 @@ export class IngestionService implements OnModuleInit {
    * Ingest raw text (gọi qua API).
    */
   async ingestText(rawText: string, metadata: Record<string, any> = {}) {
+    if (!this.vectorStoreService.isReady) {
+      throw new Error('VectorStore chưa sẵn sàng. Không thể ingest.');
+    }
     const chunks = await this.splitText([rawText], [metadata]);
     await this.vectorStoreService.vectorStore.addDocuments(chunks);
     return { chunksAdded: chunks.length };
@@ -46,6 +56,11 @@ export class IngestionService implements OnModuleInit {
    * Có thể gọi lại qua endpoint để re-index khi thêm file mới.
    */
   async ingestCompanyDocs(): Promise<{ filesProcessed: number; chunksAdded: number }> {
+    if (!this.vectorStoreService.isReady) {
+      this.logger.warn('VectorStore chưa sẵn sàng, không thể ingest.');
+      return { filesProcessed: 0, chunksAdded: 0 };
+    }
+
     if (!fs.existsSync(this.COMPANY_DOCS_DIR)) {
       this.logger.warn(`Thư mục company-docs không tồn tại: ${this.COMPANY_DOCS_DIR}`);
       return { filesProcessed: 0, chunksAdded: 0 };
@@ -67,7 +82,7 @@ export class IngestionService implements OnModuleInit {
     const chromaUrl = new URL(this.apiConfig.chromaConfig.chromaUrl);
     const chromaClient = new ChromaClient({
       host: chromaUrl.hostname,
-      port: chromaUrl.port ? parseInt(chromaUrl.port, 10) : (chromaUrl.protocol === 'https:' ? 443 : 80),
+      port: chromaUrl.port ? parseInt(chromaUrl.port, 10) : chromaUrl.protocol === 'https:' ? 443 : 80,
       ssl: chromaUrl.protocol === 'https:',
     });
 
@@ -83,7 +98,11 @@ export class IngestionService implements OnModuleInit {
         }
 
         const chunks = await this.loadPdf(filePath, { source: fileName });
-        await this.vectorStoreService.vectorStore.addDocuments(chunks);
+        await this.withRetry(
+          () => this.vectorStoreService.vectorStore.addDocuments(chunks),
+          3,
+          1000,
+        );
         totalChunks += chunks.length;
         this.logger.log(`✓ Ingest "${fileName}" → ${chunks.length} chunks`);
       } catch (err) {
@@ -114,7 +133,7 @@ export class IngestionService implements OnModuleInit {
     const chromaUrl = new URL(this.apiConfig.chromaConfig.chromaUrl);
     const chromaClient = new ChromaClient({
       host: chromaUrl.hostname,
-      port: chromaUrl.port ? parseInt(chromaUrl.port, 10) : (chromaUrl.protocol === 'https:' ? 443 : 80),
+      port: chromaUrl.port ? parseInt(chromaUrl.port, 10) : chromaUrl.protocol === 'https:' ? 443 : 80,
       ssl: chromaUrl.protocol === 'https:',
     });
 
@@ -126,7 +145,11 @@ export class IngestionService implements OnModuleInit {
 
     try {
       const chunks = await this.loadPdf(filePath, { source: fileName });
-      await this.vectorStoreService.vectorStore.addDocuments(chunks);
+      await this.withRetry(
+        () => this.vectorStoreService.vectorStore.addDocuments(chunks),
+        3,
+        1000,
+      );
       this.logger.log(`✓ Ingest "${fileName}" → ${chunks.length} chunks`);
       return { fileName, chunksAdded: chunks.length, message: 'Upload và ingest thành công!' };
     } catch (err) {
@@ -143,7 +166,7 @@ export class IngestionService implements OnModuleInit {
     const chromaUrl = new URL(this.apiConfig.chromaConfig.chromaUrl);
     const chromaClient = new ChromaClient({
       host: chromaUrl.hostname,
-      port: chromaUrl.port ? parseInt(chromaUrl.port, 10) : (chromaUrl.protocol === 'https:' ? 443 : 80),
+      port: chromaUrl.port ? parseInt(chromaUrl.port, 10) : chromaUrl.protocol === 'https:' ? 443 : 80,
       ssl: chromaUrl.protocol === 'https:',
     });
 
@@ -165,7 +188,7 @@ export class IngestionService implements OnModuleInit {
     const chromaUrl = new URL(this.apiConfig.chromaConfig.chromaUrl);
     const chromaClient = new ChromaClient({
       host: chromaUrl.hostname,
-      port: chromaUrl.port ? parseInt(chromaUrl.port, 10) : (chromaUrl.protocol === 'https:' ? 443 : 80),
+      port: chromaUrl.port ? parseInt(chromaUrl.port, 10) : chromaUrl.protocol === 'https:' ? 443 : 80,
       ssl: chromaUrl.protocol === 'https:',
     });
 
@@ -188,7 +211,30 @@ export class IngestionService implements OnModuleInit {
     }
   }
 
-  // ─── PRIVATE HELPERS ──────────────────────────────────────────────────────
+  // ─── PRIVATE HELPERS ─────────────────────────────────────────────────────
+
+  /**
+   * Retry logic cho các thao tác có thể thất bại tạm thời (network, ChromaDB).
+   */
+  private async withRetry<T>(
+    fn: () => Promise<T>,
+    maxRetries = 3,
+    delayMs = 1000,
+  ): Promise<T> {
+    let lastError: Error;
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error as Error;
+        this.logger.warn(`Attempt ${i + 1}/${maxRetries} failed: ${error.message}`);
+        if (i < maxRetries - 1) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs * (i + 1)));
+        }
+      }
+    }
+    throw lastError!;
+  }
 
   /**
    * Kiểm tra xem file PDF đã được ingest vào ChromaDB chưa.
@@ -210,10 +256,9 @@ export class IngestionService implements OnModuleInit {
     const rawDocs = await loader.load();
 
     // Gắn thêm metadata tùy chỉnh và làm sạch các field object lồng nhau để tránh lỗi cho Chroma DB
-    // BUG FIX: dùng `fileName` (metadata.source) thay vì `filePath` để nhất quán với deduplication check
     const docsWithMeta = rawDocs.map((doc) => {
-      const safeMetadata: Record<string, any> = { ...metadata }; // metadata.source = fileName
-      
+      const safeMetadata: Record<string, any> = { ...metadata };
+
       // Chỉ giữ lại các kiểu dữ liệu cơ bản được Chroma chấp nhận
       for (const [key, value] of Object.entries(doc.metadata)) {
         if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -234,7 +279,6 @@ export class IngestionService implements OnModuleInit {
 
   private async splitText(texts: string[], metadatas: Record<string, any>[]): Promise<Document[]> {
     const splitter = new RecursiveCharacterTextSplitter({
-      // Tăng chunkSize để giữ nhiều ngữ cảnh hơn (phù hợp với JD dài)
       chunkSize: 1500,
       chunkOverlap: 200,
     });

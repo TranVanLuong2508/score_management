@@ -10,6 +10,8 @@ import { Criteria } from '../criterias/entities/criteria.entity';
 import { CriteriaFrame } from '../criteria-frame/entities/criteria-frame.entity';
 import { RecommendationModule } from '../recommendation/recommendation.module';
 import { Semester } from '../semesters/entities/semester.entity';
+import { RagModule } from '../rag/rag.module';
+import { ConversationHistory } from './entities/conversation-history.entity';
 
 @Module({
   imports: [
@@ -21,10 +23,13 @@ import { Semester } from '../semesters/entities/semester.entity';
       Criteria,
       CriteriaFrame,
       Semester,
+      ConversationHistory,
     ]),
     RecommendationModule,
+    RagModule,
   ],
   controllers: [ChatbotController],
   providers: [ChatbotService],
+  exports: [ChatbotService],
 })
 export class ChatbotModule {}

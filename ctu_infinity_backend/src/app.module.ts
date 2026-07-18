@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bullmq';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { createRedisConnection } from './common/redis/redis.connection';
 
 // Modules
@@ -40,6 +41,18 @@ import { RagModule } from './modules/rag/rag.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ThrottlerModule.forRoot([
+      {
+        name: 'chatbot',
+        ttl: 60_000,
+        limit: 10,
+      },
+      {
+        name: 'rag',
+        ttl: 60_000,
+        limit: 15,
+      },
+    ]),
     TypeOrmModule.forRootAsync({
       imports: [SharedModule],
       inject: [ApiConfigService],

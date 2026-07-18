@@ -1,0 +1,13 @@
+# CodeGraph
+.codegraph/
+
+# Node
+node_modules/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+.cursor/

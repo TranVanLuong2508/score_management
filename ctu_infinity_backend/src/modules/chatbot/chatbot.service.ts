@@ -1,13 +1,11 @@
 import {
   Injectable,
-  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import OpenAI from 'openai';
-import { In, IsNull, Not, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import { Event, EVENT_STATUS } from '../events/entities/event.entity';
 import {
   EventRegistration,
@@ -21,6 +19,9 @@ import { FrameworkStatus } from 'src/common/enums/framework-status.enum';
 import { RecommendationService } from '../recommendation/recommendation.service';
 import _ from 'lodash';
 import { Semester } from '../semesters/entities/semester.entity';
+import { RagService } from '../rag/rag.service';
+import { ApiConfigService } from 'src/shared';
+import { ConversationHistory, SenderRole } from './entities/conversation-history.entity';
 
 type ChatIntent =
   | 'ask_my_info'
@@ -28,7 +29,9 @@ type ChatIntent =
   | 'ask_my_events'
   | 'ask_system_events'
   | 'ask_suggested_events'
-  | 'thanks_you';
+  | 'ask_documents'
+  | 'thanks_you'
+  | 'unknown';
 
 type IntentAnalysis = {
   intent: ChatIntent;
@@ -41,9 +44,10 @@ type IntentAnalysis = {
 export class ChatbotService {
   private readonly logger = new Logger(ChatbotService.name);
   private readonly openai: OpenAI;
+  private readonly MAX_HISTORY = 10;
 
   constructor(
-    private readonly configService: ConfigService,
+    private readonly apiConfig: ApiConfigService,
     @InjectRepository(Event)
     private readonly eventRepository: Repository<Event>,
     @InjectRepository(EventRegistration)
@@ -59,80 +63,126 @@ export class ChatbotService {
     @InjectRepository(Semester)
     private readonly semesterRepository: Repository<Semester>,
     private readonly recommendationService: RecommendationService,
+    private readonly ragService: RagService,
+    @InjectRepository(ConversationHistory)
+    private readonly conversationRepo: Repository<ConversationHistory>,
   ) {
     this.openai = new OpenAI({
-      apiKey: this.configService.get<string>('OPENAI_API_KEY'),
+      apiKey: this.apiConfig.openAiConfig.apiKey,
     });
   }
 
   // ─── PUBLIC ENTRY POINT ────────────────────────────────────────────────────
 
-  async handleChat(userId: string, question: string) {
+  async handleChat(userId: string, question: string, page: number = 1, limit: number = 20) {
+    const start = Date.now();
     const student = await this.findStudentByUserId(userId);
 
-    const intent = await this.analyzeIntent(question);
+    const history = await this.conversationRepo.find({
+      where: { userId },
+      order: { createdAt: 'DESC' },
+      take: this.MAX_HISTORY,
+    });
+
+    const intent = await this.analyzeIntent(question, history);
+    this.logger.debug(`[intent=${intent.intent}] userId=${userId}, question="${question.substring(0, 50)}..."`);
+
+    let answer: { answer: string; data: unknown; eventLinks: unknown[]; sources?: unknown[] };
 
     switch (intent.intent) {
       case 'thanks_you':
-        return this.handleThanksYou();
+        answer = await this.handleThanksYou();
+        break;
 
       case 'ask_my_info': {
         const data = await this.getStudentProfile(student.studentId);
-        console.log('dataa: ask_my_info');
-        return this.buildAnswer(question, intent.intent, data);
+        this.logger.debug(`[ask_my_info] userId=${student.studentId}, resultCount=${Array.isArray(data) ? data.length : 0}`);
+        answer = await this.buildAnswer(question, intent.intent, data);
+        break;
       }
 
       case 'ask_my_scores': {
         const data = await this.getStudentScores(student.studentId);
-        console.log('dataa: ask_my_scores');
-        return this.buildAnswer(question, intent.intent, data);
+        this.logger.debug(`[ask_my_scores] userId=${student.studentId}, duration=${Date.now() - start}ms`);
+        answer = await this.buildAnswer(question, intent.intent, data);
+        break;
       }
 
       case 'ask_my_events': {
         const data = await this.getStudentRegisteredEvents(student.studentId);
-        console.log('dataa: ask_my_events');
-        return this.buildAnswer(question, intent.intent, data);
+        this.logger.debug(`[ask_my_events] userId=${student.studentId}, resultCount=${Array.isArray(data) ? data.length : 0}`);
+        answer = await this.buildAnswer(question, intent.intent, data);
+        break;
       }
 
       case 'ask_system_events': {
-        const data = await this.getSystemEvents();
-        console.log('dataa: ask_system_events');
-        return this.buildAnswer(question, intent.intent, data);
+        const data = await this.getSystemEvents(page, limit);
+        this.logger.debug(`[ask_system_events] userId=${userId}, page=${page}, duration=${Date.now() - start}ms`);
+        answer = await this.buildAnswer(question, intent.intent, data);
+        break;
       }
 
       case 'ask_suggested_events': {
         const data = await this.getSuggestedEvents(userId);
-        console.log('dataa: ask_suggested_events');
-        return this.buildAnswer(question, intent.intent, data);
+        this.logger.debug(`[ask_suggested_events] userId=${userId}, duration=${Date.now() - start}ms`);
+        answer = await this.buildAnswer(question, intent.intent, data);
+        break;
       }
 
+      case 'ask_documents': {
+        const data = await this.getDocumentAnswer(question);
+        this.logger.debug(`[ask_documents] userId=${userId}, sourcesCount=${data.sources.length}, duration=${Date.now() - start}ms`);
+        answer = this.buildDocumentAnswer(question, data);
+        break;
+      }
+
+      case 'unknown':
       default:
-        return {
-          answer: 'Xin lỗi, tôi chưa hiểu câu hỏi của bạn. Bạn có thể hỏi lại rõ hơn không?',
-          data: [],
-        };
+        answer = this.handleUnknownQuestion(question);
+        break;
     }
+
+    // ─── Lưu vào history ───
+    await this.conversationRepo.save([
+      this.conversationRepo.create({
+        userId,
+        question,
+        senderRole: SenderRole.USER,
+        intent: intent.intent,
+      }),
+      this.conversationRepo.create({
+        userId,
+        answer: answer.answer,
+        senderRole: SenderRole.BOT,
+        intent: intent.intent,
+        data: answer as any,
+        sources: (answer.sources as Array<{ fileName: string; page?: number }>) ?? [],
+      }),
+    ]);
+
+    return answer;
   }
 
-  private get frontendBaseUrl(): string {
-    return this.configService.get<string>('FRONTEND_BASE_URL') || 'http://localhost:3000';
+  async clearHistory(userId: string) {
+    await this.conversationRepo.delete({ userId });
+    this.logger.debug(`[clearHistory] userId=${userId}`);
   }
 
-  private buildEventUrl(eventId: string | null | undefined): string | null {
-    if (!eventId) return null;
-    return `${this.frontendBaseUrl.replace(/\/$/, '')}/events/${eventId}`;
-  }
+  // ─── INTENT ANALYSIS ─────────────────────────────────────────────────────
 
-  // ─── BƯỚC 1: PHÂN TÍCH INTENT ─────────────────────────────────────────────
+  private async analyzeIntent(question: string, history: ConversationHistory[]): Promise<IntentAnalysis> {
+    const historyContext =
+      history.length > 0
+        ? `Lịch sử hội thoại gần đây:\n${[...history].reverse().map(h => `User: ${h.question}\nBot: ${h.answer ?? ''}`).join('\n')}\n\n`
+        : '';
 
-  private async analyzeIntent(question: string): Promise<IntentAnalysis> {
     const prompt = `
-Phân tích câu hỏi của sinh viên trong hệ thống quản lý điểm rèn luyện CTU và xác định ý định:
+${historyContext}Phân tích câu hỏi của sinh viên trong hệ thống quản lý điểm rèn luyện CTU và xác định ý định:
 "${question}"
 
 Trả về JSON:
 {
-  "intent": "ask_my_info|ask_my_scores|ask_my_events|ask_system_events|ask_suggested_events|thanks_you",
+  "intent": "ask_my_info|ask_my_scores|ask_my_events|ask_system_events|ask_suggested_events|ask_documents|thanks_you|unknown",
   "keyword": "từ khóa tìm kiếm sự kiện nếu có",
   "criteriaCode": "mã tiêu chí nếu có (ví dụ: I, II, III, IV, V)",
   "categoryName": "tên danh mục sự kiện nếu có"
@@ -144,13 +194,15 @@ Hướng dẫn chọn intent:
 - "ask_my_events": hỏi về các sự kiện đã / đang đăng ký của bản thân (lịch sử tham gia, trạng thái đăng ký...)
 - "ask_system_events": hỏi về sự kiện trên hệ thống (tìm kiếm sự kiện, sự kiện sắp diễn ra, chi tiết sự kiện X...)
 - "ask_suggested_events": hỏi về gợi ý sự kiện phù hợp với bản thân (nên tham gia gì, sự kiện phù hợp với tiêu chí còn thiếu...)
+- "ask_documents": hỏi về QUY ĐỊNH, CHÍNH SÁCH, QUY CHẾ, thông tin trong tài liệu (ví dụ: quy định điểm rèn luyện, cách xếp loại, tiêu chí đánh giá, quy chế học vụ...)
 - "thanks_you": câu cảm ơn, chào hỏi kết thúc
+- "unknown": câu hỏi KHÔNG liên quan đến hệ thống quản lý điểm rèn luyện CTU (ví dụ: thời tiết, tin tức, câu hỏi cá nhân không liên quan)
 
 CHỈ trả về JSON, không markdown, không giải thích.
 `;
 
     const completion = await this.openai.chat.completions.create({
-      model: this.configService.get<string>('OPENAI_CHAT_MODEL') || 'gpt-4o-mini',
+      model: this.apiConfig.openAiConfig.chatModel,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0,
       response_format: { type: 'json_object' },
@@ -160,7 +212,58 @@ CHỈ trả về JSON, không markdown, không giải thích.
     return JSON.parse(raw) as IntentAnalysis;
   }
 
-  // ─── BƯỚC 2: SINH CÂU TRẢ LỜI TỰ NHIÊN ──────────────────────────────────
+  // ─── RAG / DOCUMENT ANSWER ────────────────────────────────────────────────
+
+  private async getDocumentAnswer(
+    question: string,
+  ): Promise<{ answer: string; sources: Array<{ fileName: string; page?: number }> }> {
+    try {
+      const result = await this.ragService.ask(question);
+      return {
+        answer: result.answer,
+        sources: result.sources ?? [],
+      };
+    } catch (error) {
+      this.logger.error(`[RAG] query failed: ${error.message}, question="${question.substring(0, 50)}..."`);
+      return {
+        answer: 'Xin lỗi, tôi không thể truy xuất tài liệu lúc này. Bạn có thể hỏi lại sau.',
+        sources: [],
+      };
+    }
+  }
+
+  private buildDocumentAnswer(
+    question: string,
+    data: { answer: string; sources: Array<{ fileName: string; page?: number }> },
+  ) {
+    return {
+      answer: data.answer,
+      data: [],
+      eventLinks: [],
+      sources: data.sources,
+    };
+  }
+
+  // ─── UNKNOWN INTENT ────────────────────────────────────────────────────────
+
+  private handleUnknownQuestion(question: string) {
+    this.logger.warn(`[Intent=unknown] question="${question.substring(0, 50)}..."`);
+    return {
+      answer:
+        'Xin lỗi, câu hỏi của bạn không nằm trong phạm vi tôi có thể hỗ trợ.\n\n' +
+        'Tôi có thể giúp bạn:\n' +
+        '• Xem thông tin cá nhân (tên, mã SV, lớp)\n' +
+        '• Xem điểm rèn luyện và tiêu chí\n' +
+        '• Tìm sự kiện đã đăng ký / sự kiện trên hệ thống\n' +
+        '• Gợi ý sự kiện phù hợp\n' +
+        '• Tra cứu quy định, chính sách điểm rèn luyện\n\n' +
+        'Bạn có thể hỏi lại theo một trong các chủ đề trên nhé!',
+      data: [],
+      eventLinks: [],
+    };
+  }
+
+  // ─── BUILD ANSWER ─────────────────────────────────────────────────────────
 
   private async buildAnswer(question: string, intent: ChatIntent, data: unknown) {
     const isEmpty =
@@ -174,6 +277,7 @@ CHỈ trả về JSON, không markdown, không giải thích.
           'Xin lỗi, tôi không tìm thấy thông tin phù hợp trong hệ thống. Bạn có thể thử hỏi theo cách khác hoặc liên hệ Văn phòng Đoàn để được hỗ trợ.',
         data: Array.isArray(data) ? [] : data,
         eventLinks: [],
+        sources: [],
       };
     }
 
@@ -213,7 +317,7 @@ CHỈ trả JSON, không markdown.
 `;
 
     const completion = await this.openai.chat.completions.create({
-      model: this.configService.get<string>('OPENAI_CHAT_MODEL') || 'gpt-4o-mini',
+      model: this.apiConfig.openAiConfig.chatModel,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
       response_format: { type: 'json_object' },
@@ -256,7 +360,7 @@ CHỈ trả JSON, không markdown.
 
   private async handleThanksYou() {
     const completion = await this.openai.chat.completions.create({
-      model: this.configService.get<string>('OPENAI_CHAT_MODEL') || 'gpt-4o-mini',
+      model: this.apiConfig.openAiConfig.chatModel,
       messages: [
         {
           role: 'user',
@@ -269,7 +373,9 @@ CHỈ trả JSON, không markdown.
 
     return {
       answer: completion.choices[0].message.content?.trim() ?? 'Không có gì! Bạn cứ hỏi thêm nhé.',
-      data: [],
+      data: [] as unknown[],
+      eventLinks: [] as unknown[],
+      sources: [] as unknown[],
     };
   }
 
@@ -373,19 +479,22 @@ CHỈ trả JSON, không markdown.
   /**
    * INTENT: ask_system_events
    * Tìm kiếm sự kiện đã duyệt theo / tiêu chí / danh mục.
+   * Hỗ trợ pagination.
    */
-  async getSystemEvents() {
+  async getSystemEvents(page: number = 1, limit: number = 20) {
     const currentSemester = await this.semesterRepository.findOne({
       where: { isCurrent: true },
       select: ['semesterId'],
     });
 
-    if (!currentSemester) return [];
+    if (!currentSemester) return { events: { byCategoryName: [], byCriteriaName: [] }, pagination: { total: 0, page, limit, totalPages: 0 } };
 
-    const events = await this.eventRepository.find({
+    const [events, total] = await this.eventRepository.findAndCount({
       where: { status: EVENT_STATUS.APPROVED, semesterId: currentSemester.semesterId },
       relations: ['categories', 'organizer', 'criteria'],
       order: { startDate: 'ASC' },
+      skip: (page - 1) * limit,
+      take: limit,
     });
 
     const eventItems = events.map((e) => ({
@@ -445,8 +554,13 @@ CHỈ trả JSON, không markdown.
     }));
 
     return {
-      byCategoryName,
-      byCriteriaName,
+      events: { byCategoryName, byCriteriaName },
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
     };
   }
 
@@ -525,7 +639,14 @@ CHỈ trả JSON, không markdown.
     });
   }
 
-  // ─── HELPER ───────────────────────────────────────────────────────────────
+  // ─── HELPERS ─────────────────────────────────────────────────────────────
+
+  private readonly FRONTEND_BASE_URL = 'http://localhost:3000';
+
+  private buildEventUrl(eventId: string | null | undefined): string | null {
+    if (!eventId) return null;
+    return `${this.FRONTEND_BASE_URL.replace(/\/$/, '')}/events/${eventId}`;
+  }
 
   private async findStudentByUserId(userId: string) {
     const student = await this.studentRepository.findOne({
