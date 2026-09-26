@@ -46,7 +46,7 @@ interface RawScoreRecord {
 
 interface ScoreApiResponse {
   scores: RawScoreRecord[];
-  totalsBycriteriaId: Record<string, number>;
+  totalsByCriteriaId: Record<string, number>;
 }
 
 export const useDrlAnalysisData = (studentId: string) => {
@@ -68,8 +68,8 @@ export const useDrlAnalysisData = (studentId: string) => {
       ]);
 
       const rawTree: ICriteria[] = treeRes.data?.tree ?? [];
-      const scoreData: ScoreApiResponse = scoresRes.data ?? { scores: [], totalsBycriteriaId: {} };
-      const approvedTotals: Record<string, number> = scoreData.totalsBycriteriaId ?? {};
+      const scoreData: ScoreApiResponse = scoresRes.data ?? { scores: [], totalsByCriteriaId: {} };
+      const approvedTotals: Record<string, number> = scoreData.totalsByCriteriaId ?? {};
       const rawScores: RawScoreRecord[] = scoreData.scores ?? [];
 
       const approvedEventIds = new Set<string>(rawScores.map((s) => s.eventId));
