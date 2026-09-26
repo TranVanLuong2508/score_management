@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import { buttonVariants } from '@/components/ui/button';
 import { DayOfWeek, getDayNames, getMonthDays, getMonthName, isSameDay, isSameMonth, isToday, isWeekend, startOfMonth, today } from './calendar-utils';
 
-export { DayOfWeek } from './calendar-utils';
+export type { DayOfWeek } from './calendar-utils';
 
 export interface CalendarProps {
   selected?: Date | undefined;
