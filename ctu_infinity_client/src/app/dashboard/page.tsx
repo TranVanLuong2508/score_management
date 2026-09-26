@@ -527,6 +527,10 @@ export default function DashboardPage() {
                           id: (event.criteriaObj?.id ?? event.criteriaId) as
                             | string
                             | number,
+                          name:
+                            event.criteriaObj?.name ??
+                            event.criteriaName ??
+                            'Chưa phân loại',
                         }}
                         onViewDetails={(eventId) =>
                           router.push(`/events/${eventId}`)
