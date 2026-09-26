@@ -17,11 +17,6 @@ export default function OrganizerAttendancesPage() {
     const myEventIdsRef = useRef<Set<string>>(new Set());
     const hasFetched = useRef(false);
 
-    const showToast = (ok: boolean, msg: string) => {
-        setToast({ ok, msg });
-        setTimeout(() => setToast(null), 4000);
-    };
-
     const loadAttendances = useCallback(async () => {
         setLoading(true);
         try {
