@@ -144,7 +144,11 @@ export default function MyEventsPage() {
 
   // Flatten criteriaTree để lấy leaf criteria cho dropdown
   const criteriaOptions = useMemo(() => {
-    const collect: { criteriaId: string; criteriaCode?: string; criteriaName: string }[] = [];
+    const collect: {
+      criteriaId: string;
+      criteriaCode?: string;
+      criteriaName: string;
+    }[] = [];
     const traverse = (nodes: CriteriaTreeNode[]) => {
       for (const node of nodes) {
         if (!node.children || node.children.length === 0) {
@@ -325,7 +329,7 @@ export default function MyEventsPage() {
 
   // Xử lý cây tiêu chí: đệ quy tính điểm parent = tổng con, capped tại maxScore
   const criteriaScores = useMemo(() => {
-    if (!criteriaTree.length) return [];
+    if (!criteriaTree.length) return { roots: [], total: 0 };
 
     const processed = criteriaTree
       .map((node) => processNode(node, totalsByCriteriaId))
@@ -379,20 +383,20 @@ export default function MyEventsPage() {
 
       <main className="container mx-auto px-4 py-8 max-w-6xl">
         <div className="flex flex-col items-center md:flex-row md:justify-center relative mb-8 gap-4 px-0">
-            <Button
-              variant="ghost"
-              onClick={() => router.push('/dashboard')}
-              className="absolute left-0 top-0 md:top-1/2 md:-translate-y-1/2 w-fit -ml-2 md:ml-0"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Quay lại
-            </Button>
-            <div className="text-center mt-8 md:mt-0 px-8 sm:px-0">
-              <h1 className="text-2xl md:text-3xl font-bold">Sự kiện của tôi</h1>
-              <p className="text-sm text-muted-foreground mt-1">
-                Quản lý các sự kiện bạn đã tham gia hoặc đăng ký
-              </p>
-            </div>
+          <Button
+            variant="ghost"
+            onClick={() => router.push('/dashboard')}
+            className="absolute left-0 top-0 md:top-1/2 md:-translate-y-1/2 w-fit -ml-2 md:ml-0"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Quay lại
+          </Button>
+          <div className="text-center mt-8 md:mt-0 px-8 sm:px-0">
+            <h1 className="text-2xl md:text-3xl font-bold">Sự kiện của tôi</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Quản lý các sự kiện bạn đã tham gia hoặc đăng ký
+            </p>
+          </div>
         </div>
         {/* Semester Selector */}
         <div className="mb-6">
@@ -492,7 +496,9 @@ export default function MyEventsPage() {
                   value={customEndDate}
                   onChange={setCustomEndDate}
                   placeholder="Chọn ngày kết thúc"
-                  minDate={customStartDate ? new Date(customStartDate) : undefined}
+                  minDate={
+                    customStartDate ? new Date(customStartDate) : undefined
+                  }
                 />
               </div>
             )}
