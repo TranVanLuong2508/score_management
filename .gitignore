@@ -11,3 +11,7 @@ node_modules/
 .vscode/
 .idea/
 .cursor/
+
+.env
+.env.*
+!.env.example
