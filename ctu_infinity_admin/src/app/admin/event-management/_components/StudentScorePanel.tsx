@@ -25,7 +25,7 @@ export function StudentScorePanel({ onToast }: Props) {
     try {
       const res = await scoreApi.getByStudent(studentId.trim());
       setScores(res.data?.scores ?? []);
-      setTotals(res.data?.totalsBycriteriaId ?? {});
+      setTotals(res.data?.totalsByCriteriaId ?? {});
     } catch {
       onToast(false, 'Không thể lấy điểm sinh viên');
       setScores([]);
