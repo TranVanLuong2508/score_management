@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Calendar } from './calendar';
+import { Calendar, type CalendarProps } from './calendar';
 import { Popover, PopoverContent, PopoverTrigger } from './popover';
 import { Button } from './button';
 import { cn } from '@/lib/utils';
