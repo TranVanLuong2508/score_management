@@ -48,6 +48,8 @@ export default function OrganizerParticipantsPage() {
                 ) : (
                     <EventParticipantsPanel
                         events={events}
+                        organizers={[]}
+                        isAdmin={false}
                         onToast={(ok, message) =>
                             ok ? toast.success(message) : toast.error(message)
                         }
