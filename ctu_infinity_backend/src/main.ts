@@ -18,7 +18,7 @@ async function bootstrap() {
 
   const configService = app.select(SharedModule).get(ApiConfigService);
 
-  const port = configService.appConfig.port;
+  const port = Number(process.env.PORT ?? configService.appConfig.port);
 
   const reflector = app.get(Reflector);
   app.useGlobalGuards(new JwtAuthGuard(reflector));
@@ -44,7 +44,7 @@ async function bootstrap() {
     defaultVersion: ['1', '2'],
   });
 
-  await app.listen(port || 3000, '0.0.0.0');
+  await app.listen(port, '0.0.0.0');
   logger.warn(`Application is running on: http://localhost:${port || 3000}`);
 }
 bootstrap();
