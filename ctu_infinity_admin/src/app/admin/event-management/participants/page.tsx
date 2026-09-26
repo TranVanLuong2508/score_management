@@ -46,7 +46,12 @@ export default function OrganizerParticipantsPage() {
                         <span className="text-sm">Đang tải...</span>
                     </div>
                 ) : (
-                    <EventParticipantsPanel events={events} onToast={toast} />
+                    <EventParticipantsPanel
+                        events={events}
+                        onToast={(ok, message) =>
+                            ok ? toast.success(message) : toast.error(message)
+                        }
+                    />
                 )}
             </main>
         </div>
